@@ -110,6 +110,7 @@ static int efm32x_get_bank_index(target_addr_t base)
 {
 	switch (base) {
 		case EFM32_FLASH_BASE:
+		case EFM32_FLASH_BASE_G23:
 			return EFM32_BANK_INDEX_MAIN;
 		case EFM32_MSC_USER_DATA:
 			return EFM32_BANK_INDEX_USER_DATA;
@@ -360,7 +361,7 @@ static int efm32x_read_info(struct flash_bank *bank)
 			efm32x_info->reg_lock = EFM32_MSC_REG_LOCK;
 			ret = efm32x_get_part_info(bank, efm32_info);
 			if (ret != ERROR_OK)
-				return ret;			
+				return ret;
 			break;
 	}
 
@@ -723,6 +724,7 @@ static int efm32x_get_page_lock(struct flash_bank *bank, size_t page)
 
 	switch (bank->base) {
 		case EFM32_FLASH_BASE:
+		case EFM32_FLASH_BASE_G23:
 			dw = efm32x_info->lb_page[page >> 5];
 			mask = 1 << (page & 0x1f);
 			break;
@@ -743,7 +745,7 @@ static int efm32x_set_page_lock(struct flash_bank *bank, size_t page, int set)
 {
 	struct efm32x_flash_chip *efm32x_info = bank->driver_priv;
 
-	if (bank->base != EFM32_FLASH_BASE) {
+	if (bank->base != EFM32_FLASH_BASE || bank->base != EFM32_FLASH_BASE_G23) {
 		LOG_ERROR("Locking user and lockbits pages is not supported yet");
 		return ERROR_FAIL;
 	}
@@ -1122,14 +1124,7 @@ static int efm32x_probe(struct flash_bank *bank)
 		base_address = EFM32_FLASH_BASE_G23;
 	}
 
-	LOG_INFO("detected part: %cG%d%c%03d, rev %d",
-			efm32_mcu_info->part_family,
-			efm32_mcu_info->part_family_num,
-			efm32_mcu_info->dev_num_letter,
-			efm32_mcu_info->dev_num_digits,
-			efm32_mcu_info->prod_rev);
-	LOG_INFO("flash size = %dkbytes", efm32_mcu_info->flash_sz_kib);
-	LOG_INFO("flash page size = %dbytes", efm32_mcu_info->page_size);
+	if (bank->base == 0) bank->base = base_address;
 
 	assert(efm32_mcu_info->page_size != 0);
 
@@ -1152,6 +1147,7 @@ static int efm32x_probe(struct flash_bank *bank)
 		return ret;
 	}
 
+	uint16_t page_size;
 	if (bank->base == base_address) {
 		bank->num_sectors = efm32_mcu_info->flash_sz_kib * 1024 /
 			efm32_mcu_info->page_size;
@@ -1162,14 +1158,26 @@ static int efm32x_probe(struct flash_bank *bank)
 			LOG_ERROR("Failed to read LB data");
 			return ret;
 		}
-	} else
+		page_size = efm32_mcu_info->page_size;
+	} else{
 		bank->num_sectors = 1;
-	bank->size = bank->num_sectors * efm32_mcu_info->page_size;
-	bank->sectors = malloc(sizeof(struct flash_sector) * bank->num_sectors);
+		page_size = 1024;
+	}
+	bank->size = bank->num_sectors * page_size;
 
+	LOG_INFO("detected part: %cG%d%c%03d, rev %d",
+	efm32_mcu_info->part_family,
+	efm32_mcu_info->part_family_num,
+	efm32_mcu_info->dev_num_letter,
+	efm32_mcu_info->dev_num_digits,
+	efm32_mcu_info->prod_rev);
+	LOG_INFO("flash size = %dbytes", bank->size);
+	LOG_INFO("flash page size = %dbytes", page_size);
+
+	bank->sectors = malloc(sizeof(struct flash_sector) * bank->num_sectors);
 	for (uint32_t i = 0; i < bank->num_sectors; i++) {
-		bank->sectors[i].offset = i * efm32_mcu_info->page_size;
-		bank->sectors[i].size = efm32_mcu_info->page_size;
+		bank->sectors[i].offset = i * page_size;
+		bank->sectors[i].size = page_size;
 		bank->sectors[i].is_erased = -1;
 		bank->sectors[i].is_protected = 1;
 	}
